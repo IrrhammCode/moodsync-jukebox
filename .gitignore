@@ -1,0 +1,42 @@
+# Dependency directories
+node_modules/
+dist/
+.next/
+out/
+build/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Persistence Files (MoodSync Specific)
+rooms_db.json
+security_db.json
+vault.json
+data/vault.json
+
+# Generated Assets
+apps/server/public/audio/*.mp3
+apps/server/public/audio/*.wav
+!apps/server/public/audio/fallback_voice.mp3
+!apps/server/public/audio/fallback_music.mp3
+
+# Editor / System files
+.DS_Store
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
