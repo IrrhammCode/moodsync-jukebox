@@ -1,16 +1,15 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import dotenv from "dotenv";
 import path from "path";
 
 dotenv.config();
 dotenv.config({ path: path.join(process.cwd(), "../../.env") });
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+// Note: Using native fetch for Groq API to avoid extra dependencies and path issues
+const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 export interface DJResponse {
   djScript: string;
   musicPrompt: string;
-  sfxPrompt?: string; // Prompt for the Sound Effects API
 }
 
 export const DJEngine = {
@@ -25,7 +24,9 @@ export const DJEngine = {
     cycleCount: number = 0,
     roomUsers: string[] = [],
     personaName: string = "AURA",
-    personaTone: string = ""
+    personaTone: string = "",
+    foresightWarning: string = "",
+    externalGroqKey?: string
   ): Promise<DJResponse> {
     const isAdBreak = cycleCount % 4 === 3;
     const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -47,7 +48,13 @@ export const DJEngine = {
       ${imageBase64 ? "- You have just received a LIVE snapshot of the room/listener. Use visual details (colors, lighting, clothes) to amaze them!" : "- No camera feed available right now."}
     `;
 
-    if (isAdBreak) {
+    if (foresightWarning) {
+      promptText += `
+      URGENT - FORESIGHT INTERVENTION PROTOCOL ACTIVE:
+      ${foresightWarning}
+      You MUST abandon your regular script. You must act as a protective entity and explicitly state that your "trajectory vectors" or "predictive intuition" show their mood is shifting negatively, and you are taking over to fix it. Keep it to 2-3 punchy sentences.
+      `;
+    } else if (isAdBreak) {
       promptText += `
       COMMERCIAL BREAK MODE:
       Instead of your usual music intro, you must perform a hilarious, satirical "AI Cyberpunk Parody Ad".
@@ -63,79 +70,127 @@ export const DJEngine = {
     }
 
     promptText += `
-      Provide an output in strictly valid JSON format with three keys:
+      Provide an output in strictly valid JSON format with two keys:
       1. "djScript": The exact words you will speak on air. (Maximum 40 words). MUST match your personality instructions above.
       2. "musicPrompt": A highly detailed text-to-music prompt for the background track. IT MUST BE STRICTLY IN THE GENRE OF "${vibe}". IMPORTANT: If the vibe is NOT "Chill / Lo-Fi", then STRICTLY FORBID the use of the word "lofi" or hip-hop elements.
-      3. "sfxPrompt": (Optional) If you make a joke, say something hype, or do a parody ad, provide a 3-5 word prompt for a sound effect to play *during* your speech! (e.g., "audience laugh track", "airhorn", "ba dum tss drum", "futuristic whoosh"). Match it to your persona!
 
       Example JSON:
       {
         "djScript": "It's ${timeString} and I see ${userNames} locked in. Here's something special for you.",
-        "musicPrompt": "Smooth jazz, double bass, saxophone, brushed drums, relaxed 85bpm",
-        "sfxPrompt": "crowd cheering"
+        "musicPrompt": "Smooth jazz, double bass, saxophone, brushed drums, relaxed 85bpm"
       }
     `;
 
     try {
-      if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY.includes('your_gemini_key')) {
-         console.warn("[DJEngine] Fallback Triggered: No valid GEMINI_API_KEY found.");
-         return this.getFallback(currentMood);
+      const apiKey = externalGroqKey || process.env.GROQ_API_KEY;
+      if (!apiKey || apiKey.includes('your_groq_key')) {
+         console.warn("[DJEngine] Fallback Triggered: No valid GROQ_API_KEY found.");
+         return {
+            djScript: "I'm sorry, due to my credit limits, I can't generate a new vibe right now... 😭",
+            musicPrompt: this.getFallback(currentMood, vibe).musicPrompt
+         };
       }
 
-      console.log(`[DJEngine] Generating transition via GEMINI for: Activity=[${activityContext}] Mood=[${currentMood}] Vibe=[${vibe}]`);
+      console.log(`[DJEngine] Generating transition via GROQ (Llama 3) for: Activity=[${activityContext}] Mood=[${currentMood}] Vibe=[${vibe}]`);
 
-      const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.5-flash",
-        generationConfig: { responseMimeType: "application/json" }
-      });
-
-      let payload: any = promptText;
+      // Use a vision model if an image is provided, otherwise use the massive 70B model
+      const model = imageBase64 ? "llama-3.2-11b-vision-preview" : "llama-3.3-70b-versatile";
+      
+      const messages: any[] = [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: promptText }
+          ]
+        }
+      ];
 
       if (imageBase64) {
-         try {
-            // Strip data:image/jpeg;base64, prefix if present
-            const base64Data = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
-            const imagePart = {
-               inlineData: {
-                  data: base64Data,
-                  mimeType: "image/jpeg"
-               }
-            };
-            payload = [promptText, imagePart];
-            console.log(`[DJEngine] Vision enabled: Sending room snapshot to Gemini for deep analysis.`);
-         } catch (e) {
-            console.warn(`[DJEngine] Failed to parse image base64, falling back to text only.`);
-            payload = promptText;
-         }
+         console.log(`[DJEngine] Vision enabled: Sending room snapshot to Groq for deep analysis.`);
+         // Groq expects standard base64 data URL format or just the base64 string depending on the model
+         const base64Data = imageBase64.includes(',') ? imageBase64 : `data:image/jpeg;base64,${imageBase64}`;
+         messages[0].content.push({
+            type: "image_url",
+            image_url: { url: base64Data }
+         });
       }
 
-      const result = await model.generateContent(payload);
-      const content = result.response.text();
+      const response = await fetch(GROQ_API_URL, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: messages,
+          response_format: { type: "json_object" },
+          temperature: 0.7,
+          max_tokens: 500
+        })
+      });
 
-      if (!content) throw new Error("No content generated");
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error(`[DJEngine] Groq API Error: ${response.status}`);
+        return {
+           djScript: "I'm sorry, due to my credit limits, I can't generate a new vibe right now... 😭",
+           musicPrompt: this.getFallback(currentMood, vibe).musicPrompt
+        };
+      }
+
+      const result = await response.json();
+      const content = result.choices[0]?.message?.content;
+
+      if (!content) throw new Error("No content generated by Groq");
       
       const parsed = JSON.parse(content) as DJResponse;
-      console.log(`[DJEngine] Output -> Voice: "${parsed.djScript}"`);
+      console.log(`[DJEngine] Groq Response -> Voice: "${parsed.djScript}"`);
       return parsed;
 
     } catch (err: any) {
-      console.error("[DJEngine] Failed to generate transition via Gemini:", err.message);
-      return this.getFallback(currentMood);
+      console.error("[DJEngine] Failed to generate transition via Groq:", err.message);
+      return {
+         djScript: "I'm sorry, due to my credit limits, I can't generate a new vibe right now... 😭",
+         musicPrompt: this.getFallback(currentMood, vibe).musicPrompt
+      };
     }
   },
 
-  getFallback(mood: string): DJResponse {
-     if (mood === "sad" || mood === "tired") {
-        return {
-           djScript: "Hey everyone, energy feels a bit low right now. Let's lift those spirits up with this next track!",
-           musicPrompt: "Uplifting energetic EDM, bright synths, driving bassline, 128bpm",
-           sfxPrompt: "magic sparkle transition"
+    getFallback(mood: string, vibe: string): DJResponse {
+     const catalogs: Record<string, DJResponse> = {
+        "Electronic / EDM": {
+           djScript: "System update: High energy detected. Frequency adjusted for maximum impact. Stay synchronized.",
+           musicPrompt: "Modern high-energy EDM, pulsing bass, synth leads, festival vibes, 128bpm"
+        },
+        "Chill / Lo-Fi": {
+           djScript: "Time to slow things down. Lean back, let the frequencies stabilize, and just breathe.",
+           musicPrompt: "Chill lo-fi hip hop, warm electric piano, dusty beats, vinyl static, 85bpm"
+        },
+        "Upbeat Pop": {
+           djScript: "The vibe is bright, the energy is pure! Let's keep this momentum going with a fresh sequence.",
+           musicPrompt: "Upbeat modern pop, infectious melody, bright acoustic guitar, punchy drums, 105bpm"
+        },
+        "Alternative Rock": {
+           djScript: "Turning up the distortion. This one's for the spirits who like it a little raw. Get ready.",
+           musicPrompt: "Alternative rock, fuzzy guitars, heavy acoustic drums, energetic rhythm, 120bpm"
+        },
+        "Late Night Jazz": {
+           djScript: "Dim the lights. We're moving into the smooth spectrum now. Elegance in every note.",
+           musicPrompt: "Sophisticated late-night jazz, smoky saxophone, upright bass, brushed drums, slow tempo"
+        },
+        "Classical": {
+           djScript: "Restoring order through harmony. Experience the timeless structure of the greats.",
+           musicPrompt: "Grand orchestral classical, stirring strings, elegant piano, cinematic atmosphere"
         }
-     }
-     return {
-        djScript: "MoodSync is running smoothly! Keep that great energy going, here is your next track.",
-        musicPrompt: "Chill lo-fi hip hop, warm pads, vinyl crackle, 85bpm",
-        sfxPrompt: "short record scratch"
-     }
+     };
+
+     // Default fallback if vibe not found
+     const defaultFallback = {
+        djScript: "MoodSync protocol active. Analyzing your current frequency and delivering the next sequence.",
+        musicPrompt: "Ambient electronic, evolving textures, deep pads, steady rhythm, 100bpm"
+     };
+
+     return catalogs[vibe] || defaultFallback;
   }
 };

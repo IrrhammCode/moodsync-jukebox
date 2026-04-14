@@ -11,6 +11,7 @@ import { AudioService } from "./lib/audioService";
 import { SecurityManager } from "./lib/securityManager";
 import { getPersona } from "./lib/personas";
 import { VaultManager } from "./lib/vaultManager";
+import { VectorEngine } from "./lib/vectorEngine";
 import {
   ClientToServerEvents,
   ServerToClientEvents,
@@ -34,6 +35,17 @@ const audioPath = path.join(publicPath, "audio");
   }
 });
 app.use(express.static(publicPath));
+
+// API Endpoint for the Vibe Tracker / Analytics Dashboard
+app.get("/api/analytics", async (req, res) => {
+  try {
+     const data = await VaultManager.getAnalytics();
+     const memories = await VectorEngine.listMemories();
+     res.json({ success: true, data, memories });
+  } catch (err: any) {
+     res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 const port = process.env.PORT || 3005;
 
@@ -64,9 +76,9 @@ const VIBE_FALLBACKS: Record<string, string> = {
   "Classical": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3"
 };
 
-// Track duration constant (in ms). Each track loops for this long before crossfading.
+// Track duration constant (in ms). Full 3-minute songs play once, then crossfade.
 const TRACK_DURATION_MS = 180000; // 3 minutes
-const PRE_GEN_LEAD_TIME_MS = 30000; // Start generating next track 30s before end
+const PRE_GEN_LEAD_TIME_MS = 90000; // Start generating next track at the 1.5-minute mark (90s before end)
 
 /**
  * Full Radio Cycle for a room:
@@ -89,10 +101,10 @@ const startRadioCycle = async (roomCode: string) => {
    console.log(`[Room ${roomCode}] Track dispatched. Next crossfade in ${TRACK_DURATION_MS / 1000}s.`);
 
    // --- Schedule the next crossfade ---
-   // At T-30s: Pre-generate next track in background
+         // At T-1.5min: Pre-generate next track in background (90s lead time for 3-min generation)
    const preGenTimer = setTimeout(async () => {
       if (!RoomManager.getRoom(roomCode)) return;
-      console.log(`[Room ${roomCode}] Pre-generating next track (30s before crossfade)...`);
+      console.log(`[Room ${roomCode}] 🔮 Mid-track sync (1.5-min mark). Fetching latest mood and generating next track...`);
       const nextTrack = await generateTrackPayload(roomCode);
       if (nextTrack) {
          // Send the upcoming track data so the browser can pre-download
@@ -117,7 +129,7 @@ const startRadioCycle = async (roomCode: string) => {
    roomLoops.set(roomCode, crossfadeTimer as any);
 };
 
-/** Generates the AI DJ script + 3-track Megamix and returns the payload */
+/** Generates the AI DJ script + Full 3-minute track and returns the payload */
 const generateTrackPayload = async (roomCode: string) => {
    const room = RoomManager.getRoom(roomCode);
    if (!room) return null;
@@ -129,105 +141,114 @@ const generateTrackPayload = async (roomCode: string) => {
    const persona = getPersona(room.initialVibe);
    console.log(`[Room ${roomCode}] 🎭 Persona: ${persona.name} (Voice: ${persona.voiceId})`);
 
-   io.to(roomCode).emit("dj-audio", { audioUrl: "", message: `${persona.name} is cooking up a 3-track Megamix...` });
+   // CRITICAL: Resolve API keys for this room (Prefer Host's provided keys)
+   const host = room.users.get(room.hostSocketId);
+   const keys = host?.apiKeys;
 
-   // 1. Check THE ETERNAL VAULT first (80% reuse, 20% fresh discovery)
-   const vaultedSets = await VaultManager.findMatches(room.initialVibe, mood);
-   const reuseProbability = 0.8;
-   const wantFresh = Math.random() > reuseProbability;
+   io.to(roomCode).emit("dj-audio", { 
+      audioUrl: "", 
+      message: `${persona.name} is composing a fresh 3-minute mastertrack for you...` 
+   });
 
    let finalMusicUrls: string[] = [];
+   let voiceUrl: string | null = null;
+   let djScript = "";
 
-   if (vaultedSets.length > 0 && !wantFresh) {
-      // BINGO! Reuse existing music to save credits
-      const randomIndex = Math.floor(Math.random() * vaultedSets.length);
-      finalMusicUrls = vaultedSets[randomIndex];
-      console.log(`[Room ${roomCode}] 🏦 VAULT HIT: Reusing set of ${finalMusicUrls.length} tracks to save credits.`);
+   console.log(`[Room ${roomCode}] ⚡ Priority: Real-time AI Generation.`);
+   
+   // Track trajectory
+   room.moodHistory.push(mood);
+   let foresightWarning = "";
+
+   if (room.moodHistory.length >= 3) {
+      const trajectoryStr = room.moodHistory.slice(-3).join(" -> ");
+      const prediction = await VectorEngine.predictNextMood(trajectoryStr, { tp: keys?.turbopuffer, gemini: keys?.gemini });
+      
+      if (prediction && prediction.predictedMood !== mood && prediction.score < 0.3) {
+         foresightWarning = `Turbopuffer Prediction: Based on the trajectory [${trajectoryStr}], the user is shifting towards ${prediction.predictedMood}. Intervene now to prevent negative shifts or boost productivity!`;
+         console.log(`[Room ${roomCode}] 🔮 FORESIGHT TRIGGERED: ${foresightWarning}`);
+      }
+
+      // Memorize this trajectory for the future (background task)
+      if (room.moodHistory.length > 3) {
+         const pastTrajectory = room.moodHistory.slice(-4, -1).join(" -> ");
+         VectorEngine.memorizeTrajectory(roomCode, pastTrajectory, mood, { tp: keys?.turbopuffer, gemini: keys?.gemini });
+      }
+   }
+
+   // 1. SEMANTIC SEARCH (Credit Saver)
+   const semanticMatch = await VectorEngine.findBestMatchingTrack(room.activityContext, mood, room.initialVibe, { tp: keys?.turbopuffer, gemini: keys?.gemini });
+
+   if (semanticMatch) {
+      finalMusicUrls = semanticMatch;
+      console.log(`[Room ${roomCode}] 💰 Track reused from Turbopuffer! Skipping ElevenLabs/Prompt API.`);
+      
+      // Even with cached music, we still need a fresh DJ script
+      const aiData = await DJEngine.generateTransition(
+         room.activityContext, mood, room.initialVibe, room.latestImage, room.cycleCount, roomUserNames,
+         persona.name, persona.toneInstructions, foresightWarning, keys?.groq
+      );
+      djScript = aiData.djScript;
+   } else {
+      // 2. We need a FRESH generation
+      const aiData = await DJEngine.generateTransition(
+         room.activityContext, mood, room.initialVibe, room.latestImage, room.cycleCount, roomUserNames,
+         persona.name, persona.toneInstructions, foresightWarning, keys?.groq
+      );
+      djScript = aiData.djScript;
+
+      // Generate Voice and Full Track in parallel
+      const results = await Promise.all([
+         AudioService.generateDJVoice(djScript, persona.voiceId, persona.stability, persona.similarity, keys?.elevenlabs),
+         AudioService.generateFullTrack(aiData.musicPrompt, keys?.elevenlabs)
+      ]);
+
+      voiceUrl = results[0];
+      const trackUrls = results[1];
+
+      if (trackUrls.length > 0) {
+         // SUCCESS! Save to vault and use it
+         VaultManager.addToVault(room.initialVibe, mood, trackUrls);
+         // ALSO Save to Semantic Memory
+         VectorEngine.memorizeTrack(room.initialVibe, mood, room.activityContext, trackUrls, { tp: keys?.turbopuffer, gemini: keys?.gemini });
+         
+         finalMusicUrls = trackUrls;
+         console.log(`[Room ${roomCode}] ✅ Fresh generation successful. Saved to Vault.`);
+      }
+   }
+
+   // Ensure voiceUrl is generated if it was skipped during semantic reuse
+   if (!voiceUrl && djScript) {
+      voiceUrl = await AudioService.generateDJVoice(djScript, persona.voiceId, persona.stability, persona.similarity, keys?.elevenlabs);
    }
 
    if (finalMusicUrls.length === 0) {
-      console.log(`[Room ${roomCode}] ⚡ VAULT MISS/FRESH: Calling AURA to compose new music.`);
-      const aiData = await DJEngine.generateTransition(
-          room.activityContext,
-          mood,
-          room.initialVibe,
-          room.latestImage,
-          room.cycleCount,
-          roomUserNames,
-          persona.name,
-          persona.toneInstructions
-      );
-
-      // Generate Voice, 3-Track Megamix, and SFX in parallel
-      const [voiceUrl, megamixUrls, sfxUrl] = await Promise.all([
-         AudioService.generateDJVoice(aiData.djScript, persona.voiceId, persona.stability, persona.similarity),
-         AudioService.generateMegamix(aiData.musicPrompt),
-         aiData.sfxPrompt ? AudioService.generateSFX(aiData.sfxPrompt) : Promise.resolve(null)
-      ]);
-
-      const finalVoiceUrl = voiceUrl || "SKIP_VOICE";
+      // 3. FALLBACK: Simple vibe lookup if generation and semantic match fail
+      console.warn(`[Room ${roomCode}] ⚠️ API Problems? Searching Vault for fallback music...`);
+      const vaultedSets = await VaultManager.findMatches(room.initialVibe, mood);
       
-      // If generation succeeded, save to vault!
-      if (megamixUrls.length > 0) {
-         VaultManager.addToVault(room.initialVibe, mood, megamixUrls);
-         finalMusicUrls = megamixUrls;
+      if (vaultedSets.length > 0) {
+         const randomIndex = Math.floor(Math.random() * vaultedSets.length);
+         finalMusicUrls = vaultedSets[randomIndex];
+         console.log(`[Room ${roomCode}] 🏦 VAULT RESCUE: Found ${finalMusicUrls.length} tracks in history.`);
       } else {
-         // Deep Fallback: Look in vault one last time if API failed
-         if (vaultedSets.length > 0) {
-            console.warn(`[Room ${roomCode}] API Failed but Vault has backups! Rescuing the vibe...`);
-            finalMusicUrls = vaultedSets[Math.floor(Math.random() * vaultedSets.length)];
-         } else {
-            finalMusicUrls = [VIBE_FALLBACKS[room.initialVibe] || "SKIP_MUSIC"];
-         }
+         // 3. DEEP FALLBACK: Hardcoded vibe fallbacks
+         console.error(`[Room ${roomCode}] 🛑 Total API/Vault failure. Using hardcoded fallback.`);
+         finalMusicUrls = [VIBE_FALLBACKS[room.initialVibe] || "SKIP_MUSIC"];
       }
-
-      console.log(`[Room ${roomCode}] ${persona.name} generation complete. Megamix: ${finalMusicUrls.length} segments.`);
-
-      return {
-         track: {
-            id: `gen-${Date.now()}-cycle-${room.cycleCount}`,
-            title: `AURA Phase: ${mood}`,
-            artist: "AURA Core",
-            youtubeId: "",
-            mood: mood as any,
-            score: 1.0
-         },
-         djAudioUrl: finalVoiceUrl,
-         musicAudioUrls: finalMusicUrls,
-         sfxAudioUrl: sfxUrl || undefined
-      };
    }
-
-   // If we reached here, we are using vaulted music but we still need a fresh voice transition
-   // because the context (time, username) changes every cycle! 
-   const aiData = await DJEngine.generateTransition(
-      room.activityContext,
-      mood,
-      room.initialVibe,
-      room.latestImage,
-      room.cycleCount,
-      roomUserNames,
-      persona.name,
-      persona.toneInstructions
-   );
-
-   const [voiceUrl, sfxUrl] = await Promise.all([
-      AudioService.generateDJVoice(aiData.djScript, persona.voiceId, persona.stability, persona.similarity),
-      aiData.sfxPrompt ? AudioService.generateSFX(aiData.sfxPrompt) : Promise.resolve(null)
-   ]);
 
    return {
       track: {
-         id: `vault-${Date.now()}-cycle-${room.cycleCount}`,
-         title: `AURA Vault: ${mood}`,
+         id: `${finalMusicUrls.length > 0 && finalMusicUrls[0].includes('music_full') ? 'gen' : 'vault'}-${Date.now()}-cycle-${room.cycleCount}`,
+         title: `AURA Phase: ${mood}`,
          artist: "AURA Core",
          youtubeId: "",
          mood: mood as any,
          score: 1.0
       },
       djAudioUrl: voiceUrl || "SKIP_VOICE",
-      musicAudioUrls: finalMusicUrls,
-      sfxAudioUrl: sfxUrl || undefined
+      musicAudioUrls: finalMusicUrls
    };
 };
 
@@ -248,13 +269,14 @@ io.on("connection", (socket) => {
   };
 
   // 1. Create a Room
-  socket.on("request-create-room", ({ nickname, initialVibe, activityContext }) => {
+  socket.on("request-create-room", ({ nickname, initialVibe, activityContext, apiKeys }) => {
     if (checkBan()) return;
     try {
-      const room = RoomManager.createRoom(socket.id, nickname, initialVibe, activityContext);
+      const room = RoomManager.createRoom(socket.id, nickname, initialVibe, activityContext, apiKeys);
       
       socket.data.roomCode = room.code;
       socket.data.nickname = nickname;
+      socket.data.apiKeys = apiKeys;
       
       socket.join(room.code);
       console.log(`[Room ${room.code}] Created by host ${socket.id} (${nickname}) with vibe '${initialVibe}'`);
@@ -266,10 +288,10 @@ io.on("connection", (socket) => {
   });
 
   // 2. Join a Room
-  socket.on("join-room", ({ roomCode, nickname, activityContext }) => {
+  socket.on("join-room", ({ roomCode, nickname, activityContext, apiKeys }) => {
     if (checkBan()) return;
     try {
-      const room = RoomManager.joinRoom(roomCode, socket.id, nickname);
+      const room = RoomManager.joinRoom(roomCode, socket.id, nickname, apiKeys);
       
       if (!room) {
         socket.emit("error", { message: "Room not found or invalid code." });
@@ -283,6 +305,7 @@ io.on("connection", (socket) => {
 
       socket.data.roomCode = roomCode;
       socket.data.nickname = nickname;
+      socket.data.apiKeys = apiKeys;
       socket.join(roomCode);
       
       console.log(`[Room ${roomCode}] User ${socket.id} (${nickname}) joined.`);
@@ -489,6 +512,6 @@ setInterval(() => {
   }
 }, 15 * 60 * 1000); // Check every 15 minutes
 
-server.listen(port, () => {
-  console.log(`🚀 MoodSync Socket Server running on port ${port}`);
+server.listen(port as number, "0.0.0.0", () => {
+  console.log(`🚀 MoodSync Socket Server running on port ${port} (Available on network)`);
 });

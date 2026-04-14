@@ -197,5 +197,32 @@ export const CloudVault = {
       if (cloudUrls.length > 0) {
          await this.indexTrack(vibe, mood, cloudUrls);
       }
+   },
+
+   /**
+    * Fetches global analytics data from the Supabase vault.
+    */
+   async getGlobalStats(): Promise<any[]> {
+      const client = getClient();
+      if (!client) return [];
+
+      try {
+         // Get the most recent 100 tracks to calculate stats + show ledger
+         const { data, error } = await client
+            .from('aura_tracks')
+            .select('vibe, mood, track_urls, created_at')
+            .order('created_at', { ascending: false })
+            .limit(100);
+
+         if (error) {
+            console.error('[CloudVault] Analytics query failed:', error.message);
+            return [];
+         }
+
+         return data || [];
+      } catch (err: any) {
+         console.error('[CloudVault] Analytics error:', err.message);
+         return [];
+      }
    }
 };

@@ -117,5 +117,32 @@ export const VaultManager = {
          });
       });
       return files;
+   },
+
+   /**
+    * Returns unified analytics from either cloud or local storage.
+    */
+   async getAnalytics() {
+      // Try cloud first if available
+      if (CloudVault.isAvailable()) {
+         try {
+            const cloudData = await CloudVault.getGlobalStats();
+            if (cloudData.length > 0) return cloudData;
+         } catch (err: any) {
+            console.warn('[VaultManager] Cloud analytics failed, using local.');
+         }
+      }
+
+      // Fallback to local
+      const entries = this._loadLocalVault();
+      // Sort newest first
+      entries.sort((a, b) => b.createdAt - a.createdAt);
+      // Return top 100 max
+      return entries.slice(0, 100).map(e => ({
+         vibe: e.vibe,
+         mood: e.mood,
+         track_urls: e.trackUrls,
+         created_at: new Date(e.createdAt).toISOString()
+      }));
    }
 };

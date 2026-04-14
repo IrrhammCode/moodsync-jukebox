@@ -12,6 +12,14 @@ export type Mood =
   | "surprised"
   | "neutral";
 
+/** Secure storage for user-provided API keys in-memory */
+export interface UserApiKeys {
+  gemini?: string;
+  elevenlabs?: string;
+  groq?: string;
+  turbopuffer?: string;
+}
+
 /** Represents a single user in a room */
 export interface RoomUser {
   socketId: string;
@@ -19,6 +27,7 @@ export interface RoomUser {
   isReady: boolean;
   currentMood: Mood | null;
   lastMoodUpdate: number; // Unix timestamp
+  apiKeys?: UserApiKeys;
 }
 
 /** A room containing users, their moods, and playback state */
@@ -34,6 +43,7 @@ export interface Room {
   createdAt: number;
   latestImage?: string; // Base64 snapshot of the room for Vision 2.0
   cycleCount: number; // Tracks how many times radio looped (for Ads)
+  moodHistory: string[]; // Tracks the recent sequence of aggregated moods for AURA Foresight
 }
 
 /** Metadata about a track fetched from Turbopuffer */
@@ -52,8 +62,8 @@ export interface TrackInfo {
 
 /** Events emitted from CLIENT → SERVER */
 export interface ClientToServerEvents {
-  "request-create-room": (data: { nickname: string; initialVibe: string; activityContext: string }) => void;
-  "join-room": (data: { roomCode: string; nickname: string; activityContext: string }) => void;
+  "request-create-room": (data: { nickname: string; initialVibe: string; activityContext: string; apiKeys?: UserApiKeys }) => void;
+  "join-room": (data: { roomCode: string; nickname: string; activityContext: string; apiKeys?: UserApiKeys }) => void;
   "user-ready": () => void;
   "mood-update": (data: { mood: Mood; confidence: number }) => void;
   "leave-room": () => void;
@@ -99,4 +109,5 @@ export interface SocketData {
   nickname: string;
   ip: string;
   startTime: number | null;
+  apiKeys?: UserApiKeys;
 }

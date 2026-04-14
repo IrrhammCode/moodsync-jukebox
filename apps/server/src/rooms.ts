@@ -54,7 +54,7 @@ function generateRoomCode(): string {
 
 export const RoomManager = {
   /** Creates a new room and sets the host */
-  createRoom(hostSocketId: string, nickname: string, initialVibe: string, activityContext: string): Room {
+  createRoom(hostSocketId: string, nickname: string, initialVibe: string, activityContext: string, apiKeys?: UserApiKeys): Room {
     const code = generateRoomCode();
     
     const hostUser: RoomUser = {
@@ -63,6 +63,7 @@ export const RoomManager = {
       isReady: false,
       currentMood: null,
       lastMoodUpdate: Date.now(),
+      apiKeys,
     };
 
     const newRoom: Room = {
@@ -76,6 +77,7 @@ export const RoomManager = {
       isPlaying: false,
       createdAt: Date.now(),
       cycleCount: 0,
+      moodHistory: [],
     };
 
     activeRooms.set(code, newRoom);
@@ -83,7 +85,7 @@ export const RoomManager = {
   },
 
   /** Adds a user to an existing room if valid */
-  joinRoom(roomCode: string, socketId: string, nickname: string): Room | null {
+  joinRoom(roomCode: string, socketId: string, nickname: string, apiKeys?: UserApiKeys): Room | null {
     const room = activeRooms.get(roomCode);
     if (!room) return null;
 
@@ -95,6 +97,7 @@ export const RoomManager = {
       isReady: false,
       currentMood: null,
       lastMoodUpdate: Date.now(),
+      apiKeys,
     };
 
     room.users.set(socketId, newUser);

@@ -2,12 +2,12 @@
 
 import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { PlayCircle, Users, Video, Music, Mic, Brain, Sparkles, ChevronDown, CheckCircle2 } from "lucide-react"
-
+import { PlayCircle, Users, Video, Music, Mic, Brain, Sparkles, ChevronDown, CheckCircle2, Settings } from "lucide-react"
 import { socket } from "@/lib/socket"
 import { useMoodDetection } from "@/hooks/useMoodDetection"
 import { GlowCard } from "@/components/GlowCard"
 import { FloatingNavbar } from "@/components/FloatingNavbar"
+import { ApiKeyModal } from "@/components/ApiKeyModal"
 
 import { useRouter } from "next/navigation"
 
@@ -20,6 +20,8 @@ export default function Home() {
   const [initialVibe, setInitialVibe] = useState("Electronic")
   const [isCreating, setIsCreating] = useState(false)
   const [errorMsg, setErrorMsg] = useState("")
+  const [showAlert, setShowAlert] = useState(true)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
 
   const { videoRef, startWebcam, currentMood, isInitializing } = useMoodDetection({
     intervalMs: 8000,
@@ -70,10 +72,14 @@ export default function Home() {
        }
     }, 10000);
 
+    // Load personal API keys from LocalStorage
+    const savedKeys = localStorage.getItem("aura_byoak_keys");
+    const apiKeys = savedKeys ? JSON.parse(savedKeys) : undefined;
+
     socket.connect()
     
     socket.once("connect", () => {
-       socket.emit("request-create-room", { nickname, initialVibe, activityContext })
+       socket.emit("request-create-room", { nickname, initialVibe, activityContext, apiKeys })
        clearTimeout(timeout)
     })
   }
@@ -82,10 +88,20 @@ export default function Home() {
     if (!nickname || !joinCodeInput) { setErrorMsg("Identity and Target Code required."); return }
     if (!activityContext) { setErrorMsg("Please provide an Activity Context."); return }
     setErrorMsg("")
+
+    // Load personal API keys from LocalStorage
+    const savedKeys = localStorage.getItem("aura_byoak_keys");
+    const apiKeys = savedKeys ? JSON.parse(savedKeys) : undefined;
+
     socket.connect()
     
     socket.once("connect", () => {
-        socket.emit("join-room", { roomCode: joinCodeInput.toUpperCase(), nickname, activityContext })
+        socket.emit("join-room", { 
+           roomCode: joinCodeInput.toUpperCase(), 
+           nickname, 
+           activityContext,
+           apiKeys 
+        })
     })
   }
 
@@ -382,6 +398,61 @@ export default function Home() {
 
   return (
     <main className="min-h-[100svh] selection:bg-indigo-500/30">
+      <AnimatePresence>
+        {showAlert && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center px-6 pointer-events-none">
+            {/* Backdrop Blur */}
+            <motion.div 
+               initial={{ opacity: 0 }}
+               animate={{ opacity: 1 }}
+               exit={{ opacity: 0 }}
+               className="absolute inset-0 bg-black/60 backdrop-blur-sm pointer-events-auto"
+               onClick={() => setShowAlert(false)}
+            />
+            
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-md bg-[#0C0C14]/90 backdrop-blur-2xl border border-indigo-500/30 rounded-[32px] p-8 shadow-[0_32px_80px_rgba(0,0,0,0.8)] pointer-events-auto overflow-hidden text-center group"
+            >
+              {/* Animated Glow Border */}
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-indigo-500/50 to-transparent" />
+              
+              <div className="w-20 h-20 bg-indigo-500/10 border border-indigo-500/20 rounded-full flex items-center justify-center mx-auto mb-6 relative">
+                 <Sparkles className="w-10 h-10 text-indigo-400 animate-pulse" />
+                 <div className="absolute inset-0 rounded-full animate-ping bg-indigo-500/5" />
+              </div>
+
+              <h2 className="text-xl font-black text-white uppercase tracking-widest mb-3">System Critical</h2>
+              
+              <p className="text-zinc-400 text-sm md:text-base font-light leading-relaxed mb-8">
+                I'm sorry, I've run out of credits... 😭 <br/>
+                Please provide your personal API Keys in <span className="text-indigo-300 font-bold">Settings (the ⚙️ icon)</span> to restore AURA's full cognitive functions.
+              </p>
+
+              <div className="flex flex-col gap-3">
+                 <button 
+                   onClick={() => setIsSettingsOpen(true)}
+                   className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold uppercase tracking-widest text-xs hover:bg-indigo-500 transition-all active:scale-95 shadow-[0_0_30px_rgba(79,70,229,0.3)] flex items-center justify-center gap-2"
+                 >
+                   Configure API Keys <Settings className="w-4 h-4" />
+                 </button>
+                 <button 
+                   onClick={() => setShowAlert(false)}
+                   className="w-full bg-white/5 border border-white/10 text-white/50 py-3 rounded-xl font-bold uppercase tracking-widest text-[10px] hover:bg-white/10 hover:text-white transition-all active:scale-95"
+                 >
+                   Maybe Later
+                 </button>
+                 <p className="text-[10px] text-zinc-600 font-mono tracking-widest uppercase mt-2">AURA Protocol Version 1.1.0</p>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <ApiKeyModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+
       <FloatingNavbar />
       
       <AnimatePresence mode="wait">

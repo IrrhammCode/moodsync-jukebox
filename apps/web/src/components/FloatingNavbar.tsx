@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Music2, Copy, CheckCircle, X, Activity } from "lucide-react";
+import { Music2, Copy, CheckCircle, X, Activity, Settings } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
+import { ApiKeyModal } from "./ApiKeyModal";
 
 interface FloatingNavbarProps {
   isRoom?: boolean;
@@ -15,6 +16,7 @@ export function FloatingNavbar({ isRoom = false, roomCode, onLeaveRoom }: Floati
   const router = useRouter();
   const [scrolled, setScrolled] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 20);
@@ -38,7 +40,7 @@ export function FloatingNavbar({ isRoom = false, roomCode, onLeaveRoom }: Floati
   };
 
   return (
-    <div className="fixed top-6 left-0 right-0 z-50 flex justify-center px-4 w-full pointer-events-none">
+    <div className="fixed top-6 left-0 right-0 z-[110] flex justify-center px-4 w-full pointer-events-none">
       <motion.nav 
         initial={{ y: -100, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
@@ -79,6 +81,10 @@ export function FloatingNavbar({ isRoom = false, roomCode, onLeaveRoom }: Floati
                   AI Engine
                   <span className="absolute -bottom-1 left-0 w-0 h-[2px] bg-indigo-500 transition-all duration-300 group-hover:w-full"></span>
                 </a>
+                <a href="/analytics" className="text-zinc-400 hover:text-emerald-400 transition-colors relative group flex items-center gap-2">
+                  <Activity className="w-4 h-4" /> Analytics
+                  <span className="absolute -bottom-1 left-0 w-0 h-[2px] bg-emerald-500 transition-all duration-300 group-hover:w-full"></span>
+                </a>
               </motion.div>
             ) : (
               <motion.div
@@ -107,6 +113,15 @@ export function FloatingNavbar({ isRoom = false, roomCode, onLeaveRoom }: Floati
 
         {/* Dynamic Right Section */}
         <div className="flex items-center gap-4">
+           {/* API Key Toggle */}
+           <button
+             onClick={() => setIsSettingsOpen(true)}
+             className="w-10 h-10 rounded-full border border-white/5 bg-white/5 flex items-center justify-center hover:bg-white/10 hover:border-white/20 transition-all pointer-events-auto"
+             title="API Settings"
+           >
+             <Settings className="w-4 h-4 text-zinc-400 hover:text-white transition-colors" />
+           </button>
+
            {!isRoom ? (
              <a 
                 href="/#join"
@@ -124,6 +139,9 @@ export function FloatingNavbar({ isRoom = false, roomCode, onLeaveRoom }: Floati
            )}
         </div>
       </motion.nav>
+
+      {/* Global API Key Modal */}
+      <ApiKeyModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>
   );
 }
