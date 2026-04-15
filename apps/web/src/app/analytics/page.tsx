@@ -97,7 +97,8 @@ export default function AnalyticsPage() {
             <p className="text-zinc-600 text-sm mt-2 font-mono">Create a room to start recording data.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             
             {/* Left Column: Aggregates */}
             <div className="flex flex-col gap-6">
