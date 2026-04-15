@@ -1,3 +1,12 @@
+---
+title: MoodSync Jukebox Backend
+sdk: docker
+emoji: 📻
+colorFrom: indigo
+colorTo: pink
+pinned: false
+---
+
 # 🎧 AURA Radio Engine (MoodSync Jukebox)
 
 > A premium, AI-driven shared music experience that listens to your emotions and adapts in real-time. Powered by the AURA Protocol.
