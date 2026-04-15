@@ -76,7 +76,7 @@ export const DJEngine = {
       promptText += `
       REGULAR BROADCAST MODE:
       Provide a punchy 1-2 sentence script. Stay IN CHARACTER with your personality above!
-      Acknowledge the time, their mood, or give a shoutout to a specific listener by name!
+      CRITICAL INSTRUCTION: You MUST explicitly mention the listeners by their names (e.g., "I see you, Irham!") and casually mention what they are doing based on their activity context. Make it feel like you are watching them live in the studio!
       `;
     }
 
