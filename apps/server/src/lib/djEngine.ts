@@ -37,7 +37,8 @@ export const DJEngine = {
     personaName: string = "AURA",
     personaTone: string = "",
     foresightWarning: string = "",
-    externalGroqKey?: string
+    externalGroqKey?: string,
+    episodicHistory: string = ""
   ): Promise<DJResponse> {
     const isAdBreak = cycleCount % 4 === 3;
     const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -57,6 +58,8 @@ export const DJEngine = {
       - Absolute Core Music Vibe: "${vibe}" (CRITICAL RULE: The music prompt MUST strictly follow this genre).
       - Detected Listener Mood: "${currentMood}"
       ${imageBase64 ? "- You have just received a LIVE snapshot of the room/listener. Use visual details (colors, lighting, clothes) to amaze them!" : "- No camera feed available right now."}
+      
+      ${episodicHistory ? `=== EPISODIC CONTINUITY ===\n      Here is what you have recently said in this room:\n      ${episodicHistory}\n      CRITICAL INSTRUCTION: Do NOT repeat the exact phrases above. Instead, organically weave a continuous narrative or make a brief, clever callback to something you said earlier so the listeners feel like they are having a continuous journey with you.\n      ===========================` : ""}
     `;
 
     if (foresightWarning) {

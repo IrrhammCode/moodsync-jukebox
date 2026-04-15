@@ -192,6 +192,9 @@ const generateTrackPayload = async (roomCode: string, durationMs: number = 18000
       }
    }
 
+   // EPISODIC MEMORY RECALL
+   const episodicHistory = await VectorEngine.recallEpisodicMemory(roomCode, { tp: keys?.turbopuffer, gemini: keys?.gemini });
+
    // 1. SEMANTIC SEARCH (Credit Saver)
    // We pass durationMs to ensure we only recycle a full track if the user is a Pro, or any track for Free users.
    const semanticMatch = await VectorEngine.findBestMatchingTrack(room.activityContext, mood, room.initialVibe, { tp: keys?.turbopuffer, gemini: keys?.gemini }, durationMs);
@@ -203,16 +206,18 @@ const generateTrackPayload = async (roomCode: string, durationMs: number = 18000
       // Even with cached music, we still need a fresh DJ script
       const aiData = await DJEngine.generateTransition(
          room.activityContext, mood, room.initialVibe, room.latestImage, room.cycleCount, roomUserNames,
-         persona.name, persona.toneInstructions, foresightWarning, keys?.groq
+         persona.name, persona.toneInstructions, foresightWarning, keys?.groq, episodicHistory
       );
       djScript = aiData.djScript;
+      VectorEngine.memorizeDJScript(roomCode, djScript, { tp: keys?.turbopuffer, gemini: keys?.gemini });
    } else {
       // 2. We need a FRESH generation
       const aiData = await DJEngine.generateTransition(
          room.activityContext, mood, room.initialVibe, room.latestImage, room.cycleCount, roomUserNames,
-         persona.name, persona.toneInstructions, foresightWarning, keys?.groq
+         persona.name, persona.toneInstructions, foresightWarning, keys?.groq, episodicHistory
       );
       djScript = aiData.djScript;
+      VectorEngine.memorizeDJScript(roomCode, djScript, { tp: keys?.turbopuffer, gemini: keys?.gemini });
 
       // Generate Voice and Full Track in parallel
       const results = await Promise.all([

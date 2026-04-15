@@ -7,6 +7,8 @@ dotenv.config({ path: path.join(process.cwd(), "../../.env") });
 const TP_BASE_URL = "https://api.turbopuffer.com/v1/namespaces";
 const NAMESPACE_FORESIGHT = "aura_foresight";
 const NAMESPACE_TRACKS = "aura_track_memory";
+const NAMESPACE_EPISODIC = "aura_dj_episodic";
+const NAMESPACE_INTERVENTIONS = "aura_interventions";
 const GEMINI_EMBED_URL = "https://generativelanguage.googleapis.com/v1/models/text-embedding-004:embedContent";
 
 export const VectorEngine = {
@@ -213,6 +215,134 @@ export const VectorEngine = {
       }
       return null;
     } catch(err) {
+      return null;
+    }
+  },
+
+  /**
+   * Memorizes a DJ script into episodic memory for context in future generations.
+   */
+  async memorizeDJScript(roomCode: string, scriptText: string, externalKeys?: { tp?: string, gemini?: string }) {
+    const tpKey = externalKeys?.tp || process.env.TURBOPUFFER_API_KEY;
+    if (!tpKey || tpKey.includes("your_turbopuffer")) return;
+
+    try {
+      const vector = await this.getEmbedding(scriptText, externalKeys?.gemini);
+      
+      await fetch(`${TP_BASE_URL}/${NAMESPACE_EPISODIC}/upsert`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${tpKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          upsert_rows: [{
+            id: Date.now(),
+            vector: vector,
+            attributes: { room: roomCode, text: scriptText, timestamp: Date.now() }
+          }]
+        })
+      });
+      console.log(`[VectorEngine] 🧠 Stored DJ Episodic Memory for room ${roomCode}`);
+    } catch (err: any) {
+      console.error("[VectorEngine] Failed to memorize DJ script:", err.message);
+    }
+  },
+
+  /**
+   * Recalls the last few DJ scripts for a room to provide continuity to Llama 3.
+   */
+  async recallEpisodicMemory(roomCode: string, externalKeys?: { tp?: string, gemini?: string }): Promise<string> {
+    const tpKey = externalKeys?.tp || process.env.TURBOPUFFER_API_KEY;
+    if (!tpKey || tpKey.includes("your_turbopuffer")) return "";
+
+    try {
+      // Query with a zero vector but filter by room ID to get recent memories for this room.
+      const vector = Array(768).fill(0);
+      const res = await fetch(`${TP_BASE_URL}/${NAMESPACE_EPISODIC}/query`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${tpKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rank_by: ["vector", "ANN", vector],
+          filters: ["room", "Eq", roomCode],
+          limit: 3,
+          include_attributes: ["text", "timestamp"]
+        })
+      });
+
+      if (!res.ok) return "";
+      const data = await res.json();
+      if (!data || data.length === 0) return "";
+      
+      // Sort by timestamp desc and format
+      data.sort((a: any, b: any) => b.attributes.timestamp - a.attributes.timestamp);
+      const history = data.map((d: any) => `- You recently said: "${d.attributes.text}"`).join("\n      ");
+      return history;
+
+    } catch (err: any) {
+      return "";
+    }
+  },
+
+  /**
+   * Memorizes a successful mood intervention (e.g. going from sad to happy).
+   */
+  async memorizeIntervention(startMood: string, endMood: string, musicPrompt: string, vibe: string, externalKeys?: { tp?: string, gemini?: string }) {
+    const tpKey = externalKeys?.tp || process.env.TURBOPUFFER_API_KEY;
+    if (!tpKey || tpKey.includes("your_turbopuffer")) return;
+
+    try {
+      const contextStr = `Shifted mood from ${startMood} to ${endMood}`;
+      const vector = await this.getEmbedding(contextStr, externalKeys?.gemini);
+      
+      await fetch(`${TP_BASE_URL}/${NAMESPACE_INTERVENTIONS}/upsert`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${tpKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          upsert_rows: [{
+            id: Date.now(),
+            vector: vector,
+            attributes: { startMood, endMood, musicPrompt, vibe }
+          }]
+        })
+      });
+      console.log(`[VectorEngine] 🧠 Learned Intervention: ${startMood} -> ${endMood} using [${vibe}]`);
+    } catch (err: any) {
+      console.error("[VectorEngine] Failed to memorize intervention:", err.message);
+    }
+  },
+
+  /**
+   * Recommends a music prompt based on past successful interventions for a struggling mood.
+   */
+  async recommendIntervention(currentMood: string, desiredMood: string, externalKeys?: { tp?: string, gemini?: string }): Promise<{ musicPrompt: string, vibe: string } | null> {
+    const tpKey = externalKeys?.tp || process.env.TURBOPUFFER_API_KEY;
+    if (!tpKey || tpKey.includes("your_turbopuffer")) return null;
+
+    try {
+      const contextStr = `Shifted mood from ${currentMood} to ${desiredMood}`;
+      const vector = await this.getEmbedding(contextStr, externalKeys?.gemini);
+
+      const res = await fetch(`${TP_BASE_URL}/${NAMESPACE_INTERVENTIONS}/query`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${tpKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rank_by: ["vector", "ANN", vector],
+          limit: 1,
+          filters: [ ["startMood", "Eq", currentMood], "And", ["endMood", "Eq", desiredMood] ],
+          include_attributes: ["musicPrompt", "vibe"]
+        })
+      });
+
+      if (!res.ok) return null;
+      const data = await res.json();
+      
+      if (data && data.length > 0 && data[0].dist < 0.25) {
+         console.log(`[VectorEngine] 💡 Intervention Recommended: Past memory shows [${data[0].attributes.vibe}] works for ${currentMood}->${desiredMood}`);
+         return {
+            musicPrompt: data[0].attributes.musicPrompt,
+            vibe: data[0].attributes.vibe
+         };
+      }
+      return null;
+    } catch (err: any) {
       return null;
     }
   },
