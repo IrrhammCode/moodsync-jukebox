@@ -353,6 +353,22 @@ export default function RoomPage() {
     })
 
     return () => {
+      // 1. Terminate all active playing audio
+      if (voiceRef.current) { voiceRef.current.pause(); voiceRef.current.removeAttribute('src'); }
+      if (sfxRef.current) { sfxRef.current.pause(); sfxRef.current.removeAttribute('src'); }
+      
+      // 2. Terminate the Web Audio API nodes
+      if (currentSourceRef.current) {
+         try { currentSourceRef.current.stop(); currentSourceRef.current.disconnect(); } catch(e) {}
+         currentSourceRef.current = null;
+      }
+      
+      // 3. Suspend and close the entire Audio Context to free hardware memory
+      if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+         audioCtxRef.current.close().catch(console.error);
+         audioCtxRef.current = null;
+      }
+
       socket.off("room-joined")
       socket.off("user-joined")
       socket.off("user-left")
