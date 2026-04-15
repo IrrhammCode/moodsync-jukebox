@@ -47,7 +47,7 @@ app.get("/api/analytics", async (req, res) => {
   }
 });
 
-const port = process.env.PORT || 3005;
+const port = process.env.PORT || 7860;
 
 const server = http.createServer(app);
 
@@ -131,15 +131,16 @@ const startRadioCycle = async (roomCode: string) => {
 
 /** Generates the AI DJ script + Full 3-minute track and returns the payload */
 const generateTrackPayload = async (roomCode: string) => {
-   const room = RoomManager.getRoom(roomCode);
-   if (!room) return null;
+   try {
+      const room = RoomManager.getRoom(roomCode);
+      if (!room) return null;
 
-   const mood = room.aggregatedMood || "neutral";
-   const roomUserNames = Array.from(room.users.values()).map(u => u.nickname);
+      const mood = room.aggregatedMood || "neutral";
+      const roomUserNames = Array.from(room.users.values()).map(u => u.nickname);
 
-   // Resolve the persona for this room's vibe
-   const persona = getPersona(room.initialVibe);
-   console.log(`[Room ${roomCode}] 🎭 Persona: ${persona.name} (Voice: ${persona.voiceId})`);
+      // Resolve the persona for this room's vibe
+      const persona = getPersona(room.initialVibe);
+      console.log(`[Room ${roomCode}] 🎭 Persona: ${persona.name} (Voice: ${persona.voiceId})`);
 
    // CRITICAL: Resolve API keys for this room (Prefer Host's provided keys)
    const host = room.users.get(room.hostSocketId);
@@ -238,18 +239,36 @@ const generateTrackPayload = async (roomCode: string) => {
       }
    }
 
-   return {
-      track: {
-         id: `${finalMusicUrls.length > 0 && finalMusicUrls[0].includes('music_full') ? 'gen' : 'vault'}-${Date.now()}-cycle-${room.cycleCount}`,
-         title: `AURA Phase: ${mood}`,
-         artist: "AURA Core",
-         youtubeId: "",
-         mood: mood as any,
-         score: 1.0
-      },
-      djAudioUrl: voiceUrl || "SKIP_VOICE",
-      musicAudioUrls: finalMusicUrls
-   };
+      return {
+         track: {
+            id: `${finalMusicUrls.length > 0 && finalMusicUrls[0].includes('music_full') ? 'gen' : 'vault'}-${Date.now()}-cycle-${room.cycleCount}`,
+            title: `AURA Phase: ${mood}`,
+            artist: "AURA Core",
+            youtubeId: "",
+            mood: mood as any,
+            score: 1.0
+         },
+         djAudioUrl: voiceUrl || "SKIP_VOICE",
+         musicAudioUrls: finalMusicUrls
+      };
+   } catch (error: any) {
+      console.error(`[Room ${roomCode}] 🛑 CRITICAL CYCLE FAILURE: ${error.message}`);
+      const room = RoomManager.getRoom(roomCode);
+      const fallbackVibe = room ? room.initialVibe : "Electronic / EDM";
+      
+      return {
+         track: {
+            id: `critical-fallback-${Date.now()}`,
+            title: `AURA Recovery Protocol`,
+            artist: "AURA Core",
+            youtubeId: "",
+            mood: "neutral",
+            score: 1.0
+         },
+         djAudioUrl: "/audio/fallback_voice.mp3",
+         musicAudioUrls: ["/audio/fallback_music.mp3"] // Assuming this exists or will just fail safely on front-end if missing
+      };
+   }
 };
 
 io.on("connection", (socket) => {
