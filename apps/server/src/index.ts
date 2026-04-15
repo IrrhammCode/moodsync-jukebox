@@ -59,9 +59,11 @@ const io = new Server<
   SocketData
 >(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || "http://localhost:3000", // Strict CORS
+    origin: process.env.FRONTEND_URL || "http://localhost:3000",
     methods: ["GET", "POST"],
+    credentials: true
   },
+  transports: ["websocket"] // Ensure server prefers WebSocket
 });
 
 const roomLoops = new Map<string, NodeJS.Timeout>();
