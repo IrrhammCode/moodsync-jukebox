@@ -15,23 +15,30 @@ export const VectorEngine = {
    */
   async getEmbedding(text: string, externalGeminiKey?: string): Promise<number[]> {
     const apiKey = externalGeminiKey || process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY missing");
-
-    const res = await fetch(`${GEMINI_EMBED_URL}?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        content: { parts: [{ text }] }
-      })
-    });
-
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Embedding failed: ${res.status} - ${err}`);
+    if (!apiKey) {
+      console.warn("[VectorEngine] GEMINI_API_KEY missing. Returning zero vector.");
+      return Array(768).fill(0);
     }
 
-    const data = await res.json();
-    return data.embedding.values; // Returns number[]
+    try {
+      const res = await fetch(`${GEMINI_EMBED_URL}?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: { parts: [{ text }] }
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error(`Embedding failed: ${res.status}`);
+      }
+
+      const data = await res.json();
+      return data.embedding.values; // Returns number[]
+    } catch(err: any) {
+      console.warn("[VectorEngine] Embedding prediction failed. Returning zero vector. ", err.message);
+      return Array(768).fill(0);
+    }
   },
 
   /**
@@ -82,8 +89,14 @@ export const VectorEngine = {
    * If it finds a past scenario, it returns the predicted "Next Mood" and similarity score.
    */
   async predictNextMood(currentTrajectory: string, externalKeys?: { tp?: string, gemini?: string }): Promise<{ predictedMood: string, score: number, memoryText: string } | null> {
+    const fallbackResponse = {
+       predictedMood: "steady state",
+       score: 0.5,
+       memoryText: "Fallback heuristic applied: maintaining current atmospheric pressure."
+    };
+
     const tpKey = externalKeys?.tp || process.env.TURBOPUFFER_API_KEY;
-    if (!tpKey || tpKey.includes("your_turbopuffer")) return null;
+    if (!tpKey || tpKey.includes("your_turbopuffer")) return fallbackResponse;
 
     try {
       const vector = await this.getEmbedding(currentTrajectory, externalKeys?.gemini);
@@ -102,7 +115,7 @@ export const VectorEngine = {
       });
 
       if (!res.ok) {
-         return null;
+         return fallbackResponse;
       }
 
       const data = await res.json();
@@ -114,17 +127,17 @@ export const VectorEngine = {
             memoryText: data[0].attributes.trajectory
          };
       }
-      return null;
+      return fallbackResponse;
     } catch (err: any) {
       console.error("[VectorEngine] Prediction error:", err.message);
-      return null;
+      return fallbackResponse;
     }
   },
 
   /**
    * Memorizes a successful track generation to save credits later.
    */
-  async memorizeTrack(vibe: string, mood: string, activity: string, urls: string[], externalKeys?: { tp?: string, gemini?: string }) {
+  async memorizeTrack(vibe: string, mood: string, activity: string, urls: string[], externalKeys?: { tp?: string, gemini?: string }, durationMs?: number) {
     const tpKey = externalKeys?.tp || process.env.TURBOPUFFER_API_KEY;
     if (!tpKey || tpKey.includes("your_turbopuffer")) return;
 
@@ -144,12 +157,13 @@ export const VectorEngine = {
             vector: vector,
             attributes: {
               vibe, mood, activity,
+              durationMs: durationMs || 15000,
               urls: JSON.stringify(urls)
             }
           }]
         })
       });
-      console.log(`[VectorEngine] 💾 Saved track mapping to Memory for Activity: "${activity}"`);
+      console.log(`[VectorEngine] 💾 Saved track mapping to Memory for Activity: "${activity}" (Duration: ${durationMs})`);
     } catch(err) {
       console.error("[VectorEngine] Failed tracking memory:", err);
     }
@@ -158,7 +172,7 @@ export const VectorEngine = {
   /**
    * Searches Turbopuffer for an existing track that perfectly matches the semantic meaning of the current activity/mood.
    */
-  async findBestMatchingTrack(activity: string, mood: string, vibe: string, externalKeys?: { tp?: string, gemini?: string }): Promise<string[] | null> {
+  async findBestMatchingTrack(activity: string, mood: string, vibe: string, externalKeys?: { tp?: string, gemini?: string }, expectedDurationMs: number = 180000): Promise<string[] | null> {
     const tpKey = externalKeys?.tp || process.env.TURBOPUFFER_API_KEY;
     if (!tpKey || tpKey.includes("your_turbopuffer")) return null;
 
@@ -174,8 +188,8 @@ export const VectorEngine = {
         },
         body: JSON.stringify({
           rank_by: ["vector", "ANN", vector],
-          limit: 1,
-          include_attributes: ["urls", "vibe"]
+          limit: 3, // Fetch a few to check attributes
+          include_attributes: ["urls", "vibe", "durationMs"]
         })
       });
 
@@ -183,9 +197,19 @@ export const VectorEngine = {
       
       const data = await res.json();
       // High strictness: must be < 0.15 distance (approx 85%+ exact conceptual match) to reuse
-      if (data && data.length > 0 && data[0].dist < 0.15 && data[0].attributes.vibe === vibe) {
-         console.log(`[VectorEngine] 💰 CREDIT SAVED: Found semantic match for "${activity}" (Score: ${data[0].dist})`);
-         return JSON.parse(data[0].attributes.urls);
+      // We also check duration. A Pro user needs exactly their duration. A Free user can take any duration.
+      if (data && data.length > 0) {
+         for (let i = 0; i < data.length; i++) {
+           const track = data[i];
+           if (track.dist < 0.15 && track.attributes.vibe === vibe) {
+             const trackDuration = track.attributes.durationMs || 180000;
+             // If Pro (180k), only accept 180k tracks. If Free (15k), accept any track.
+             if (expectedDurationMs === 180000 && trackDuration !== 180000) continue;
+             
+             console.log(`[VectorEngine] 💰 CREDIT SAVED: Found semantic match for "${activity}" (Score: ${track.dist})`);
+             return JSON.parse(track.attributes.urls);
+           }
+         }
       }
       return null;
     } catch(err) {
@@ -196,8 +220,8 @@ export const VectorEngine = {
   /**
    * Retrieves raw memories for the Analytics Dashboard UI
    */
-  async listMemories(): Promise<any[]> {
-    const tpKey = process.env.TURBOPUFFER_API_KEY;
+  async listMemories(externalApiKey?: string): Promise<any[]> {
+    const tpKey = externalApiKey || process.env.TURBOPUFFER_API_KEY;
     if (!tpKey || tpKey.includes("your_turbopuffer")) return [];
     
     try {

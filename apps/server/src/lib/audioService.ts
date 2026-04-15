@@ -27,7 +27,7 @@ export const AudioService = {
     const apiKey = externalApiKey || process.env.ELEVENLABS_API_KEY;
     if (!apiKey || apiKey.includes('your_elevenlabs_key')) {
       console.warn("[AudioService] Missing ElevenLabs API Key. Using fallback voice audio.");
-      return null;
+      return "/audio/fallback_voice.mp3";
     }
 
     try {
@@ -64,25 +64,23 @@ export const AudioService = {
       return `/audio/${fileName}`;
     } catch (err: any) {
       console.error("[AudioService] Failed TTS Generation:", err.message);
-      return null;
+      return "/audio/fallback_voice.mp3";
     }
   },
 
   /**
-   * Generates a single full-length 3-minute mastertrack.
-   * One continuous song with natural Intro → Build → Climax → Outro structure.
-   * Returns a single-element array for backward compatibility with the Vault system.
+   * Generates a single full-length 3-minute mastertrack or a short looped track.
    */
-  async generateFullTrack(basePrompt: string, externalApiKey?: string): Promise<string[]> {
+  async generateFullTrack(basePrompt: string, externalApiKey?: string, durationMs: number = 180000): Promise<string[]> {
      const apiKey = externalApiKey || process.env.ELEVENLABS_API_KEY;
      if (!apiKey || apiKey.includes('your_elevenlabs_key')) {
        console.warn("[AudioService] Missing ElevenLabs API Key. Using fallback music.");
-       return [];
+       return ["/audio/fallback_music.mp3"];
      }
 
      const fullPrompt = `${basePrompt}. Create a complete song with natural progression: gentle intro, building energy, powerful climax, and satisfying outro.`;
 
-     console.log(`[AudioService] 🎵 Generating Full 3-Minute Mastertrack...`);
+     console.log(`[AudioService] 🎵 Generating Track (${durationMs / 1000}s)...`);
      console.log(`[AudioService]   Prompt: "${fullPrompt.substring(0, 80)}..."`);
 
      try {
@@ -95,7 +93,7 @@ export const AudioService = {
            },
            body: JSON.stringify({
               prompt: fullPrompt,
-              music_length_ms: 180000, // 3 minutes (180 seconds)
+              music_length_ms: durationMs,
               force_instrumental: true
            })
         });
@@ -110,11 +108,11 @@ export const AudioService = {
         const filePath = path.join(AUDIO_DIR, fileName);
         fs.writeFileSync(filePath, Buffer.from(buffer));
 
-        console.log(`[AudioService] ✅ Full track saved: ${fileName} (${(fileSize / 1024 / 1024).toFixed(1)} MB)`);
+        console.log(`[AudioService] ✅ Track saved: ${fileName} (${(fileSize / 1024 / 1024).toFixed(1)} MB)`);
         return [`/audio/${fileName}`];
      } catch (err: any) {
-        console.error(`[AudioService] ❌ Full track generation failed:`, err.message);
-        return [];
+        console.error(`[AudioService] ❌ Track generation failed:`, err.message);
+        return ["/audio/fallback_music.mp3"];
      }
   },
 };

@@ -76,44 +76,56 @@ const VIBE_FALLBACKS: Record<string, string> = {
   "Classical": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3"
 };
 
-// Track duration constant (in ms). Full 3-minute songs play once, then crossfade.
-const TRACK_DURATION_MS = 180000; // 3 minutes
+// Track duration constants (in ms)
 const PRE_GEN_LEAD_TIME_MS = 90000; // Start generating next track at the 1.5-minute mark (90s before end)
 
 /**
  * Full Radio Cycle for a room:
  * 1. Immediately generate & play the first track.
- * 2. At (TRACK_DURATION - 30s), pre-generate the NEXT track.
- * 3. At TRACK_DURATION, emit crossfade-now to smoothly transition.
- * 4. Repeat forever.
+ * 2. At (TRACK_DURATION - 30s), pre-generate the NEXT track (Pro Tier).
+ * 3. At TRACK_DURATION, emit crossfade-now to smoothly transition (Pro Tier).
+ * Note: If Free Tier, it generates a 15s track and STOPS the cycle. The client will loop it natively.
  */
 const startRadioCycle = async (roomCode: string) => {
    const room = RoomManager.getRoom(roomCode);
    if (!room) return;
 
+   // CRITICAL: Resolve API keys for this room (Prefer Host's provided keys)
+   const host = room.users.get(room.hostSocketId);
+   const keys = host?.apiKeys;
+   const isBYOAK = !!keys?.elevenlabs && !keys.elevenlabs.includes('your_elevenlabs_key');
+   const durationMs = isBYOAK ? 180000 : 15000; // 3 mins vs 15 seconds
+
    // --- Generate the current track ---
    room.isPlaying = true;
-   const trackData = await generateTrackPayload(roomCode);
+   const trackData = await generateTrackPayload(roomCode, durationMs);
    if (!trackData) return;
 
    // Emit the first track immediately (play-track)
    io.to(roomCode).emit("play-track", trackData);
-   console.log(`[Room ${roomCode}] Track dispatched. Next crossfade in ${TRACK_DURATION_MS / 1000}s.`);
+   
+   if (!isBYOAK) {
+      console.log(`[Room ${roomCode}] Free Tier Active. Dispatched 15s track. Halting server cycle. Engine will loop natively.`);
+      // Do not schedule crossfade timers. 15s track will loop endlessly.
+      return;
+   }
 
-   // --- Schedule the next crossfade ---
-         // At T-1.5min: Pre-generate next track in background (90s lead time for 3-min generation)
+   console.log(`[Room ${roomCode}] Pro Tier (BYOAK) Active. Track dispatched. Next crossfade in ${durationMs / 1000}s.`);
+
+   // --- Schedule the next crossfade (Pro Tier) ---
    const preGenTimer = setTimeout(async () => {
       if (!RoomManager.getRoom(roomCode)) return;
       console.log(`[Room ${roomCode}] 🔮 Mid-track sync (1.5-min mark). Fetching latest mood and generating next track...`);
-      const nextTrack = await generateTrackPayload(roomCode);
+      const nextTrack = await generateTrackPayload(roomCode, durationMs);
       if (nextTrack) {
          // Send the upcoming track data so the browser can pre-download
          io.to(roomCode).emit("upcoming-track", nextTrack);
       }
-   }, TRACK_DURATION_MS - PRE_GEN_LEAD_TIME_MS);
+   }, durationMs - PRE_GEN_LEAD_TIME_MS);
 
    // At T=3min: Signal the crossfade and restart the cycle
    const crossfadeTimer = setTimeout(async () => {
+      clearTimeout(preGenTimer);
       const liveRoom = RoomManager.getRoom(roomCode);
       if (!liveRoom) return;
       io.to(roomCode).emit("crossfade-now", {});
@@ -123,14 +135,14 @@ const startRadioCycle = async (roomCode: string) => {
       liveRoom.isPlaying = false;
       liveRoom.cycleCount += 1;
       startRadioCycle(roomCode);
-   }, TRACK_DURATION_MS);
+   }, durationMs);
 
    // Store timers for cleanup
    roomLoops.set(roomCode, crossfadeTimer as any);
 };
 
-/** Generates the AI DJ script + Full 3-minute track and returns the payload */
-const generateTrackPayload = async (roomCode: string) => {
+/** Generates the AI DJ script + Full track and returns the payload */
+const generateTrackPayload = async (roomCode: string, durationMs: number = 180000) => {
    try {
       const room = RoomManager.getRoom(roomCode);
       if (!room) return null;
@@ -142,13 +154,14 @@ const generateTrackPayload = async (roomCode: string) => {
       const persona = getPersona(room.initialVibe);
       console.log(`[Room ${roomCode}] 🎭 Persona: ${persona.name} (Voice: ${persona.voiceId})`);
 
-   // CRITICAL: Resolve API keys for this room (Prefer Host's provided keys)
    const host = room.users.get(room.hostSocketId);
    const keys = host?.apiKeys;
 
+   // Provide a hint message depending on the tier
+   const actionLabel = durationMs === 15000 ? "a quick 15-second loop vibe" : "a fresh 3-minute mastertrack";
    io.to(roomCode).emit("dj-audio", { 
       audioUrl: "", 
-      message: `${persona.name} is composing a fresh 3-minute mastertrack for you...` 
+      message: `${persona.name} is composing ${actionLabel} for you...` 
    });
 
    let finalMusicUrls: string[] = [];
@@ -178,7 +191,8 @@ const generateTrackPayload = async (roomCode: string) => {
    }
 
    // 1. SEMANTIC SEARCH (Credit Saver)
-   const semanticMatch = await VectorEngine.findBestMatchingTrack(room.activityContext, mood, room.initialVibe, { tp: keys?.turbopuffer, gemini: keys?.gemini });
+   // We pass durationMs to ensure we only recycle a full track if the user is a Pro, or any track for Free users.
+   const semanticMatch = await VectorEngine.findBestMatchingTrack(room.activityContext, mood, room.initialVibe, { tp: keys?.turbopuffer, gemini: keys?.gemini }, durationMs);
 
    if (semanticMatch) {
       finalMusicUrls = semanticMatch;
@@ -201,7 +215,7 @@ const generateTrackPayload = async (roomCode: string) => {
       // Generate Voice and Full Track in parallel
       const results = await Promise.all([
          AudioService.generateDJVoice(djScript, persona.voiceId, persona.stability, persona.similarity, keys?.elevenlabs),
-         AudioService.generateFullTrack(aiData.musicPrompt, keys?.elevenlabs)
+         AudioService.generateFullTrack(aiData.musicPrompt, keys?.elevenlabs, durationMs)
       ]);
 
       voiceUrl = results[0];
@@ -211,7 +225,8 @@ const generateTrackPayload = async (roomCode: string) => {
          // SUCCESS! Save to vault and use it
          VaultManager.addToVault(room.initialVibe, mood, trackUrls);
          // ALSO Save to Semantic Memory
-         VectorEngine.memorizeTrack(room.initialVibe, mood, room.activityContext, trackUrls, { tp: keys?.turbopuffer, gemini: keys?.gemini });
+         VectorEngine.memorizeTrack(room.initialVibe, mood, room.activityContext, trackUrls, { tp: keys?.turbopuffer, gemini: keys?.gemini }, durationMs);
+
          
          finalMusicUrls = trackUrls;
          console.log(`[Room ${roomCode}] ✅ Fresh generation successful. Saved to Vault.`);
