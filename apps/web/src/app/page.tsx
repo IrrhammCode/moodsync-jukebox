@@ -424,11 +424,11 @@ export default function Home() {
                  <div className="absolute inset-0 rounded-full animate-ping bg-indigo-500/5" />
               </div>
 
-              <h2 className="text-xl font-black text-white uppercase tracking-widest mb-3">System Critical</h2>
+              <h2 className="text-xl font-black text-white uppercase tracking-widest mb-3">AURA Protocol: Demo Mode</h2>
               
               <p className="text-zinc-400 text-sm md:text-base font-light leading-relaxed mb-8">
-                I'm sorry, I've run out of credits... 😭 <br/>
-                Please provide your personal API Keys in <span className="text-indigo-300 font-bold">Settings (the ⚙️ icon)</span> to restore AURA's full cognitive functions.
+                AURA is currently operating in 'Demo Mode' due to community credit limits. <br/>
+                Please provide your personal API Keys in <span className="text-indigo-300 font-bold">Settings (the ⚙️ icon)</span> to unlock the full 3-minute neural synthesis and persistent cognition.
               </p>
 
               <div className="flex flex-col gap-3">
