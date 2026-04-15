@@ -12,6 +12,17 @@ export interface DJResponse {
   musicPrompt: string;
 }
 
+const APOLOGY_SCRIPTS = [
+  "AURA is currently in 'Demo Mode'. To unlock unlimited 3-minute neural mastertracks, please connect your own ElevenLabs API key in the configuration menu.",
+  "You're hearing a 15-second loop on our Free Tier. Ready for the full journey? Bring your own API key to bypass community limits and keep the music playing!",
+  "Enjoying these frequencies? This short sequence is part of our community pool. For personal high-fidelity 3-minute tracks, please provide your own API key.",
+  "Community credit limits for this hour have been reached. AURA is transitioning to stabilized standby loops. Connect your own key to restore full neural generation."
+];
+
+function getRandomApology() {
+  return APOLOGY_SCRIPTS[Math.floor(Math.random() * APOLOGY_SCRIPTS.length)];
+}
+
 export const DJEngine = {
   /**
    * Generates a conversational script for AURA and a corresponding music prompt via Google Gemini.
@@ -86,7 +97,7 @@ export const DJEngine = {
       if (!apiKey || apiKey.includes('your_groq_key')) {
          console.warn("[DJEngine] Fallback Triggered: No valid GROQ_API_KEY found.");
          return {
-            djScript: "I'm sorry, due to my credit limits, I can't generate a new vibe right now... 😭",
+            djScript: getRandomApology(),
             musicPrompt: this.getFallback(currentMood, vibe).musicPrompt
          };
       }
@@ -134,7 +145,7 @@ export const DJEngine = {
         const errorData = await response.json().catch(() => ({}));
         console.error(`[DJEngine] Groq API Error: ${response.status}`);
         return {
-           djScript: "I'm sorry, due to my credit limits, I can't generate a new vibe right now... 😭",
+           djScript: getRandomApology(),
            musicPrompt: this.getFallback(currentMood, vibe).musicPrompt
         };
       }
@@ -151,7 +162,7 @@ export const DJEngine = {
     } catch (err: any) {
       console.error("[DJEngine] Failed to generate transition via Groq:", err.message);
       return {
-         djScript: "I'm sorry, due to my credit limits, I can't generate a new vibe right now... 😭",
+         djScript: getRandomApology(),
          musicPrompt: this.getFallback(currentMood, vibe).musicPrompt
       };
     }
