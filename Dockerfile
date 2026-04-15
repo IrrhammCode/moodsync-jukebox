@@ -1,5 +1,5 @@
-# Use Node 18 Alpine
-FROM node:18-alpine
+# Use Node 20 Alpine (Required for Next.js 16 and Supabase dependencies)
+FROM node:20-alpine
 
 # Set working directory
 WORKDIR /app

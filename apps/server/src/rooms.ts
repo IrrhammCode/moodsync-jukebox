@@ -1,4 +1,4 @@
-import { Room, RoomUser, Mood } from "./types";
+import { Room, RoomUser, Mood, UserApiKeys } from "./types";
 import fs from "fs";
 import path from "path";
 
